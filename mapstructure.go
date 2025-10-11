@@ -344,6 +344,10 @@ type DecoderConfig struct {
 	// TagName, comparable to `mapstructure:"-"` as default behaviour.
 	IgnoreUntaggedFields bool
 
+	DefaultsMethodName string
+
+	ValidatesMethodName string
+
 	// MatchName is the function used to match the map key to the struct
 	// field name or tag. Defaults to `strings.EqualFold`. This can be used
 	// to implement case-sensitive tag values, support snake casing, etc.
@@ -555,7 +559,7 @@ func (d *Decoder) decode(name string, input any, outVal reflect.Value) error {
 	var (
 		inputVal   = reflect.ValueOf(input)
 		outputKind = getKind(outVal)
-		decodeNil  = d.config.DecodeNil && d.cachedDecodeHook != nil
+		decodeNil  = d.config.DecodeNil && (d.cachedDecodeHook != nil || d.config.DefaultsMethodName != "")
 	)
 	if isNil(input) {
 		// Typed nils won't match the "input == nil" below, so reset input.
@@ -607,6 +611,9 @@ func (d *Decoder) decode(name string, input any, outVal reflect.Value) error {
 		}
 	}
 	if isNil(input) {
+		if d.config.DefaultsMethodName != "" {
+			return d.decode(name, inputVal, outVal)
+		}
 		return nil
 	}
 
@@ -1318,7 +1325,7 @@ func (d *Decoder) decodePtr(name string, data any, val reflect.Value) (bool, err
 			isNil = v.IsNil()
 		}
 	}
-	if isNil {
+	if isNil && d.config.DefaultsMethodName == "" {
 		if !val.IsNil() && val.CanSet() {
 			nilValue := reflect.New(val.Type()).Elem()
 			val.Set(nilValue)
@@ -1335,6 +1342,22 @@ func (d *Decoder) decodePtr(name string, data any, val reflect.Value) (bool, err
 		realVal := val
 		if realVal.IsNil() || d.config.ZeroFields {
 			realVal = reflect.New(valElemType)
+		}
+
+		if d.config.DefaultsMethodName != "" {
+			m, ok := valType.MethodByName(d.config.DefaultsMethodName)
+			if isNil && !ok {
+				return true, nil
+			}
+			if ok {
+				if !m.IsExported() {
+					return false, fmt.Errorf("method Defaults(%q) is not exported", d.config.DefaultsMethodName)
+				}
+				r := realVal.Method(m.Index).Call(nil)
+				if r != nil {
+					return false, fmt.Errorf("method Defaults(%q) must return void", d.config.DefaultsMethodName)
+				}
+			}
 		}
 
 		if err := d.decode(name, data, reflect.Indirect(realVal)); err != nil {
@@ -1512,7 +1535,9 @@ func (d *Decoder) decodeStruct(name string, data any, val reflect.Value) error {
 	dataValKind := dataVal.Kind()
 	switch dataValKind {
 	case reflect.Map:
-		return d.decodeStructFromMap(name, dataVal, val)
+		if err := d.decodeStructFromMap(name, dataVal, val); err != nil {
+			return err
+		}
 
 	case reflect.Struct:
 		// Not the most efficient way to do this but we can optimize later if
@@ -1534,13 +1559,42 @@ func (d *Decoder) decodeStruct(name string, data any, val reflect.Value) error {
 			return err
 		}
 
-		result := d.decodeStructFromMap(name, reflect.Indirect(addrVal), val)
-		return result
+		if err := d.decodeStructFromMap(name, reflect.Indirect(addrVal), val); err != nil {
+			return err
+		}
 
 	default:
 		return newDecodeError(name,
 			fmt.Errorf("expected a map or struct, got %q", dataValKind))
 	}
+
+	if d.config.ValidatesMethodName != "" {
+		if m, ok := reflect.PointerTo(val.Type()).MethodByName(d.config.ValidatesMethodName); ok {
+			if !m.IsExported() {
+				return fmt.Errorf("method Validates(%q) is not exported", d.config.ValidatesMethodName)
+			}
+			r := val.Addr().Method(m.Index).Call(nil)
+			if len(r) != 1 {
+				return fmt.Errorf("method Validates(%q) must return one", d.config.ValidatesMethodName)
+			}
+			rErr := r[0].Interface()
+			if !isNil(rErr) {
+				err, ok := rErr.(error)
+				if !ok {
+					return fmt.Errorf("method Validates(%q) must return error type", d.config.ValidatesMethodName)
+				}
+				if err != nil {
+					method := d.config.ValidatesMethodName
+					if name != "" {
+						method = name + "." + method
+					}
+					return fmt.Errorf("%s: %w", method, err)
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 func (d *Decoder) decodeStructFromMap(name string, dataVal, val reflect.Value) error {

@@ -241,6 +241,46 @@ type Remainder struct {
 	Extra map[string]any `mapstructure:",remain"`
 }
 
+type Defaulter struct {
+	A int
+	B int
+	C int
+}
+
+func (v *Defaulter) Defaults() {
+	v.B = 1
+	v.C = 2
+}
+
+type DeepDefaulter struct {
+	A int
+	X *Defaulter
+}
+
+type Validator struct {
+	A int
+	B int
+}
+
+func (v Validator) Validate() error {
+	if v.B < v.A {
+		return fmt.Errorf("%d < %d", v.B, v.A)
+	}
+	return nil
+}
+
+type ValidatorPtr struct {
+	A int
+	B int
+}
+
+func (v *ValidatorPtr) Validate() error {
+	if v.B < v.A {
+		return fmt.Errorf("%d < %d", v.B, v.A)
+	}
+	return nil
+}
+
 type StructWithOmitEmpty struct {
 	VisibleStringField string         `mapstructure:"visible-string"`
 	OmitStringField    string         `mapstructure:"omittable-string,omitempty"`
@@ -4671,5 +4711,181 @@ func TestUnmarshaler_StructToMap(t *testing.T) {
 	}
 	if result["Age"] != 30 {
 		t.Errorf("expected Age 30, got %v", result["Age"])
+	}
+}
+
+func TestDecoder_Defaults(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"c": -2,
+	}
+
+	var result *Defaulter
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		DefaultsMethodName: "Defaults",
+		Result:             &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	expected := Defaulter{
+		A: 0,
+		B: 1,
+		C: -2,
+	}
+	if result == nil || !reflect.DeepEqual(*result, expected) {
+		t.Fatalf("bad: %#v", result)
+	}
+}
+
+func TestDecoder_Defaults_Nil(t *testing.T) {
+	t.Parallel()
+
+	var input map[string]any
+
+	var result *Defaulter
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		DefaultsMethodName: "Defaults",
+		DecodeNil:          true,
+		Result:             &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	expected := Defaulter{
+		A: 0,
+		B: 1,
+		C: 2,
+	}
+	if result == nil || !reflect.DeepEqual(*result, expected) {
+		t.Fatalf("bad: %#v", result)
+	}
+}
+
+func TestDecoder_Defaults_DeepNil(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"x": nil,
+	}
+
+	var result *DeepDefaulter
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		DefaultsMethodName: "Defaults",
+		DecodeNil:          true,
+		Result:             &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	expected := DeepDefaulter{
+		X: &Defaulter{
+			A: 0,
+			B: 1,
+			C: 2,
+		},
+	}
+	if result == nil || !reflect.DeepEqual(*result, expected) {
+		t.Fatalf("bad: %#v", result)
+	}
+}
+
+func TestDecoder_Validates(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"a": 2,
+		"b": 1,
+	}
+
+	var result Validator
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		ValidatesMethodName: "Validate",
+		Result:              &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err == nil {
+		t.Fatal("expected error due in validates")
+	}
+
+	errorMessage := err.Error()
+	t.Logf("Error message: %s", errorMessage)
+}
+
+func TestDecoder_Validates_Ptr(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"a": 2,
+		"b": 1,
+	}
+
+	var result *ValidatorPtr
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		ValidatesMethodName: "Validate",
+		Result:              &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err == nil {
+		t.Fatal("expected error due in validates")
+	}
+
+	errorMessage := err.Error()
+	t.Logf("Error message: %s", errorMessage)
+}
+
+func TestDecoder_Validates_NoErr(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"a": 1,
+		"b": 2,
+	}
+
+	var result *Validator
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		ValidatesMethodName: "Validate",
+		Result:              &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
 	}
 }
