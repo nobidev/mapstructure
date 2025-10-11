@@ -1,3 +1,3 @@
-module github.com/go-viper/mapstructure/v2
+module github.com/nobidev/mapstructure/v2
 
 go 1.18
