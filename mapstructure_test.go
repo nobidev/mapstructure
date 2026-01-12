@@ -4648,3 +4648,28 @@ func TestUnmarshaler_MapType(t *testing.T) {
 		t.Errorf("expected key:bob=100, got %d", result.Scores["key:bob"])
 	}
 }
+
+func TestUnmarshaler_StructToMap(t *testing.T) {
+	t.Parallel()
+
+	// Input is a struct that implements Unmarshaler
+	// Output is a map - Unmarshaler should NOT be involved
+	input := PersonWithUnmarshaler{
+		Name: "Alice",
+		Age:  30,
+	}
+
+	var result map[string]any
+	err := Decode(input, &result)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	// Should use normal struct-to-map decoding
+	if result["Name"] != "Alice" {
+		t.Errorf("expected Name 'Alice', got %v", result["Name"])
+	}
+	if result["Age"] != 30 {
+		t.Errorf("expected Age 30, got %v", result["Age"])
+	}
+}
