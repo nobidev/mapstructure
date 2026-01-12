@@ -173,6 +173,25 @@
 //	    Public: "I made it through!"
 //	}
 //
+// # Custom Decoding with Unmarshaler
+//
+// Types can implement the Unmarshaler interface to control their own decoding. The interface
+// behaves similarly to how UnmarshalJSON does in the standard library. It can be used as an
+// alternative or companion to a DecodeHook.
+//
+//	type TrimmedString string
+//
+//	func (t *TrimmedString) UnmarshalMapstructure(input any) error {
+//	    str, ok := input.(string)
+//	    if !ok {
+//	        return fmt.Errorf("expected string, got %T", input)
+//	    }
+//	    *t = TrimmedString(strings.TrimSpace(str))
+//	    return nil
+//	}
+//
+// See the Unmarshaler interface documentation for more details.
+//
 // # Other Configuration
 //
 // mapstructure is highly configurable. See the DecoderConfig struct
