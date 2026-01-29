@@ -281,6 +281,33 @@ func (v *ValidatorPtr) Validate() error {
 	return nil
 }
 
+type AnyNested struct {
+	Bool   bool           `mapstructure:",nested"`
+	Number int            `mapstructure:",nested"`
+	String string         `mapstructure:",nested"`
+	Map    map[string]any `mapstructure:",nested"`
+	Slice  []any          `mapstructure:",nested"`
+}
+
+type MapValues struct {
+	Items []string `mapstructure:",nested"`
+}
+
+type MapValuesNested struct {
+	Values *MapValues
+}
+
+type MapValuesWithValidator struct {
+	Items []string `mapstructure:",nested"`
+}
+
+func (v *MapValuesWithValidator) Validate() error {
+	if len(v.Items) > 0 {
+		return fmt.Errorf("%d", len(v.Items))
+	}
+	return nil
+}
+
 type StructWithOmitEmpty struct {
 	VisibleStringField string         `mapstructure:"visible-string"`
 	OmitStringField    string         `mapstructure:"omittable-string,omitempty"`
@@ -4888,4 +4915,221 @@ func TestDecoder_Validates_NoErr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %s", err)
 	}
+}
+
+func TestDecoder_Nested_Bool(t *testing.T) {
+	t.Parallel()
+
+	input := true
+
+	var result *AnyNested
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		Result: &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	expected := AnyNested{
+		Bool: true,
+	}
+	if result == nil || !reflect.DeepEqual(*result, expected) {
+		t.Fatalf("bad: %#v", result)
+	}
+}
+
+func TestDecoder_Nested_Number(t *testing.T) {
+	t.Parallel()
+
+	input := 1
+
+	var result *AnyNested
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		Result: &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	expected := AnyNested{
+		Number: 1,
+	}
+	if result == nil || !reflect.DeepEqual(*result, expected) {
+		t.Fatalf("bad: %#v", result)
+	}
+}
+
+func TestDecoder_Nested_String(t *testing.T) {
+	t.Parallel()
+
+	input := "2"
+
+	var result *AnyNested
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		Result: &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	expected := AnyNested{
+		String: "2",
+	}
+	if result == nil || !reflect.DeepEqual(*result, expected) {
+		t.Fatalf("bad: %#v", result)
+	}
+}
+
+func TestDecoder_Nested_Map(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{"3": 4}
+
+	var result *AnyNested
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		Result: &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	expected := AnyNested{
+		Map: map[string]any{"3": 4},
+	}
+	if result == nil || !reflect.DeepEqual(*result, expected) {
+		t.Fatalf("bad: %#v", result)
+	}
+}
+
+func TestDecoder_Nested_Slice(t *testing.T) {
+	t.Parallel()
+
+	input := []any{5, "6"}
+
+	var result *AnyNested
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		Result: &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	expected := AnyNested{
+		Slice: []any{5, "6"},
+	}
+	if result == nil || !reflect.DeepEqual(*result, expected) {
+		t.Fatalf("bad: %#v", result)
+	}
+}
+
+func TestDecoder_ArrayToStruct(t *testing.T) {
+	t.Parallel()
+
+	input := []any{"foo", "bar"}
+
+	var result *MapValues
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		Result: &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	expected := MapValues{
+		Items: []string{"foo", "bar"},
+	}
+	if result == nil || !reflect.DeepEqual(*result, expected) {
+		t.Fatalf("bad: %#v", result)
+	}
+}
+
+func TestDecoder_ArrayToStruct_Nested(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]any{
+		"values": []string{"foo", "bar"},
+	}
+
+	var result *MapValuesNested
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		Result: &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	expected := MapValuesNested{
+		Values: &MapValues{
+			Items: []string{"foo", "bar"},
+		},
+	}
+	if result == nil || !reflect.DeepEqual(*result, expected) {
+		t.Fatalf("bad: %#v", result)
+	}
+}
+
+func TestDecoder_ArrayToStruct_Validates(t *testing.T) {
+	t.Parallel()
+
+	input := []any{"foo", "bar"}
+
+	var result *MapValuesWithValidator
+
+	decoder, err := NewDecoder(&DecoderConfig{
+		ValidatesMethodName: "Validate",
+		Result:              &result,
+	})
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	err = decoder.Decode(input)
+	if err == nil {
+		t.Fatal("expected error due in validates")
+	}
+
+	errorMessage := err.Error()
+	t.Logf("Error message: %s", errorMessage)
 }

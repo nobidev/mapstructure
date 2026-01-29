@@ -202,6 +202,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -339,6 +340,8 @@ type DecoderConfig struct {
 	// The option of the value in the tag that indicates a field should
 	// be squashed. This defaults to "squash".
 	SquashTagOption string
+
+	NestedTagOption string
 
 	// IgnoreUntaggedFields ignores all struct fields without explicit
 	// TagName, comparable to `mapstructure:"-"` as default behaviour.
@@ -509,6 +512,10 @@ func NewDecoder(config *DecoderConfig) (*Decoder, error) {
 
 	if config.SquashTagOption == "" {
 		config.SquashTagOption = "squash"
+	}
+
+	if config.NestedTagOption == "" {
+		config.NestedTagOption = "nested"
 	}
 
 	if config.MatchName == nil {
@@ -1532,40 +1539,83 @@ func (d *Decoder) decodeStruct(name string, data any, val reflect.Value) error {
 		return nil
 	}
 
-	dataValKind := dataVal.Kind()
-	switch dataValKind {
-	case reflect.Map:
-		if err := d.decodeStructFromMap(name, dataVal, val); err != nil {
-			return err
+	isNested := false
+	valType := val.Type()
+	for i := 0; i < valType.NumField(); i++ {
+		fieldType := valType.Field(i)
+		fieldVal := val.Field(i)
+		if slices.Contains(getTagParts(fieldType, d.config.TagName), d.config.NestedTagOption) && dataVal.Kind() == fieldType.Type.Kind() {
+			isNested = true
+			if err := d.decode(name, data, fieldVal); err != nil {
+				return err
+			}
+			break
+		}
+	}
+
+	if !isNested {
+		dataValKind := dataVal.Kind()
+		switch dataValKind {
+		case reflect.Map:
+			if err := d.decodeStructFromMap(name, dataVal, val); err != nil {
+				return err
+			}
+
+		case reflect.Struct:
+			// Not the most efficient way to do this but we can optimize later if
+			// we want to. To convert from struct to struct we go to map first
+			// as an intermediary.
+
+			// Make a new map to hold our result
+			mapType := reflect.TypeOf((map[string]any)(nil))
+			mval := reflect.MakeMap(mapType)
+
+			// Creating a pointer to a map so that other methods can completely
+			// overwrite the map if need be (looking at you decodeMapFromMap). The
+			// indirection allows the underlying map to be settable (CanSet() == true)
+			// where as reflect.MakeMap returns an unsettable map.
+			addrVal := reflect.New(mval.Type())
+
+			reflect.Indirect(addrVal).Set(mval)
+			if err := d.decodeMapFromStruct(name, dataVal, reflect.Indirect(addrVal), mval); err != nil {
+				return err
+			}
+
+			if err := d.decodeStructFromMap(name, reflect.Indirect(addrVal), val); err != nil {
+				return err
+			}
+
+		default:
+			return newDecodeError(name,
+				fmt.Errorf("expected a map or struct, got %q", dataValKind))
+		}
+		if d.config.ValidatesMethodName != "" {
+			if m, ok := reflect.PointerTo(val.Type()).MethodByName(d.config.ValidatesMethodName); ok {
+				if !m.IsExported() {
+					return fmt.Errorf("method Validates(%q) is not exported", d.config.ValidatesMethodName)
+				}
+				r := val.Addr().Method(m.Index).Call(nil)
+				if len(r) != 1 {
+					return fmt.Errorf("method Validates(%q) must return one", d.config.ValidatesMethodName)
+				}
+				rErr := r[0].Interface()
+				if !isNil(rErr) {
+					err, ok := rErr.(error)
+					if !ok {
+						return fmt.Errorf("method Validates(%q) must return error type", d.config.ValidatesMethodName)
+					}
+					if err != nil {
+						method := d.config.ValidatesMethodName
+						if name != "" {
+							method = name + "." + method
+						}
+						return fmt.Errorf("%s: %w", method, err)
+					}
+				}
+			}
 		}
 
-	case reflect.Struct:
-		// Not the most efficient way to do this but we can optimize later if
-		// we want to. To convert from struct to struct we go to map first
-		// as an intermediary.
-
-		// Make a new map to hold our result
-		mapType := reflect.TypeOf((map[string]any)(nil))
-		mval := reflect.MakeMap(mapType)
-
-		// Creating a pointer to a map so that other methods can completely
-		// overwrite the map if need be (looking at you decodeMapFromMap). The
-		// indirection allows the underlying map to be settable (CanSet() == true)
-		// where as reflect.MakeMap returns an unsettable map.
-		addrVal := reflect.New(mval.Type())
-
-		reflect.Indirect(addrVal).Set(mval)
-		if err := d.decodeMapFromStruct(name, dataVal, reflect.Indirect(addrVal), mval); err != nil {
-			return err
-		}
-
-		if err := d.decodeStructFromMap(name, reflect.Indirect(addrVal), val); err != nil {
-			return err
-		}
-
-	default:
-		return newDecodeError(name,
-			fmt.Errorf("expected a map or struct, got %q", dataValKind))
+		return nil
 	}
 
 	if d.config.ValidatesMethodName != "" {
